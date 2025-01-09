@@ -6,6 +6,7 @@ from .video_grid import VideoGrid
 from .camera_dialog import CameraSelectionDialog
 from core.camera_manager import CameraManager
 import time
+import cv2
 
 logger = logging.getLogger(__name__)
 
@@ -33,18 +34,21 @@ class MainWindow(QMainWindow):
             
             # Create video grid
             logger.debug("Creating VideoGrid")
-            self.video_grid = VideoGrid(rows=2, cols=2)
+            self.video_grid = VideoGrid()  # Remove rows and cols parameters
             main_layout.addWidget(self.video_grid)
+            
+            # Initialize with single camera view
+            self.video_grid.setup_grid(1)
             
             # Create control panel
             logger.debug("Creating control panel")
             self.control_panel = self.create_control_panel()
             main_layout.addWidget(self.control_panel)
             
-            # Setup frame update timer with precise timing
+            # Setup frame update timer
             self.update_timer = QTimer()
             self.update_timer.setTimerType(Qt.TimerType.PreciseTimer)
-            self.update_timer.setInterval(33)  # ~30 FPS
+            self.update_timer.setInterval(16)  # ~60 FPS to match camera
             self.update_timer.timeout.connect(self.update_video_frames)
             
             # Performance monitoring
@@ -99,22 +103,23 @@ class MainWindow(QMainWindow):
             raise
 
     def update_video_frames(self):
-        """Update all video frames"""
-        if not self.camera_manager.running:
-            return
-            
+        """Update all video feeds"""
         try:
-            current_time = time.time()
+            # Get frames from all cameras
+            frames = self.camera_manager.get_frames()
             
-            for camera_id in self.camera_manager.cameras.keys():
-                frame = self.camera_manager.get_frame(camera_id)
+            # Update each camera feed
+            for camera_idx, frame in frames.items():
                 if frame is not None:
-                    self.video_grid.update_feed(camera_id, frame)
-                    self.frame_count += 1
+                    # Convert BGR to RGB for display
+                    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    self.video_grid.update_feed(camera_idx, rgb_frame)
                 else:
-                    self.video_grid.clear_feed(camera_id)
+                    self.video_grid.clear_feed(camera_idx)
             
             # Log FPS every second
+            self.frame_count += 1
+            current_time = time.time()
             if current_time - self.last_fps_time >= 1.0:
                 fps = self.frame_count / (current_time - self.last_fps_time)
                 logger.debug(f"UI Update FPS: {fps:.1f}")
@@ -126,43 +131,30 @@ class MainWindow(QMainWindow):
 
     def show_camera_selection(self):
         """Show camera selection dialog"""
-        try:
-            logger.debug("Opening camera selection dialog")
-            dialog = CameraSelectionDialog(self)
-            if dialog.exec() == CameraSelectionDialog.DialogCode.Accepted:
-                device_path = dialog.get_selected_camera()
-                if device_path is not None:
-                    logger.debug(f"Selected camera: {device_path}")
-                    # Stop current camera if running
-                    if self.camera_manager.running:
-                        self.camera_manager.stop_capture()
-                        self.video_grid.clear_feed(self.current_camera_id)
-                    
-                    # Try to connect to selected camera
-                    if self.camera_manager.add_camera(self.current_camera_id, device_path):
-                        logger.debug("Camera connected successfully")
-                        self.camera_manager.start_capture()
-                        self.connect_camera_btn.setText("Disconnect Camera")
-                        self.update_button_states()
-                    else:
-                        logger.error(f"Failed to connect to camera: {device_path}")
-                        QMessageBox.warning(self, "Camera Error", 
-                                          f"Could not connect to camera: {device_path}")
-        except Exception as e:
-            logger.error(f"Error in camera selection: {str(e)}", exc_info=True)
+        dialog = CameraSelectionDialog(self)
+        if dialog.exec():
+            selected_cameras = dialog.get_selected_cameras()
+            if selected_cameras:
+                # Setup video grid for selected number of cameras
+                self.video_grid.setup_grid(len(selected_cameras))
+                
+                # Start camera manager with selected cameras
+                for camera_idx in selected_cameras:
+                    self.camera_manager.add_camera(camera_idx)
+                self.camera_manager.start_capture()
+                
+                # Update button states
+                self.update_button_states()
 
     def toggle_camera(self):
         """Toggle camera connection on/off"""
         try:
-            if self.camera_manager.running:
-                logger.debug("Stopping camera capture")
+            if self.camera_manager.is_capturing():
+                logger.debug("Stopping cameras")
                 self.camera_manager.stop_capture()
                 self.connect_camera_btn.setText("Connect Camera")
             else:
-                if self.camera_manager.is_camera_connected(self.current_camera_id):
-                    logger.debug("Starting camera capture")
-                    self.camera_manager.start_capture()
-                    self.connect_camera_btn.setText("Disconnect Camera")
+                self.show_camera_selection()
             self.update_button_states()
         except Exception as e:
             logger.error(f"Error toggling camera: {str(e)}", exc_info=True)
@@ -170,13 +162,12 @@ class MainWindow(QMainWindow):
     def update_button_states(self):
         """Update button states based on camera connection"""
         try:
-            camera_connected = self.camera_manager.is_camera_connected(self.current_camera_id)
-            camera_running = self.camera_manager.running
-            
-            self.connect_camera_btn.setEnabled(camera_connected)
-            self.play_button.setEnabled(camera_connected and not camera_running)
-            self.pause_button.setEnabled(camera_connected and camera_running)
-            self.record_button.setEnabled(camera_connected and camera_running)
+            camera_connected = self.camera_manager.is_capturing()
+            self.connect_camera_btn.setText("Disconnect Camera" if camera_connected else "Connect Camera")
+            self.select_camera_btn.setEnabled(not camera_connected)
+            self.play_button.setEnabled(False)  # Disable unused buttons
+            self.pause_button.setEnabled(False)
+            self.record_button.setEnabled(False)
         except Exception as e:
             logger.error(f"Error updating button states: {str(e)}", exc_info=True)
 

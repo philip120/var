@@ -1,7 +1,9 @@
 # src/ui/camera_selection_dialog.py
 
 import logging
-from PyQt6.QtWidgets import QDialog, QVBoxLayout, QListWidget, QPushButton, QHBoxLayout
+from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QListWidget, QPushButton, 
+                          QHBoxLayout, QLabel, QListWidgetItem)
+from PyQt6.QtCore import Qt
 from utils.camera_utils import get_available_cameras
 
 logger = logging.getLogger(__name__)
@@ -9,14 +11,22 @@ logger = logging.getLogger(__name__)
 class CameraSelectionDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Select Camera")
-        self.setMinimumWidth(400)
+        self.setWindowTitle("Select Cameras")
+        self.setMinimumWidth(500)
+        
+        # Store selected cameras
+        self.selected_cameras = []
         
         # Create layout
         layout = QVBoxLayout(self)
         
-        # Create list widget
+        # Add instruction label
+        self.status_label = QLabel("Select up to 2 cameras:")
+        layout.addWidget(self.status_label)
+        
+        # Create list widget with checkboxes
         self.camera_list = QListWidget()
+        self.camera_list.itemChanged.connect(self.on_item_changed)
         layout.addWidget(self.camera_list)
         
         # Create button layout
@@ -25,7 +35,7 @@ class CameraSelectionDialog(QDialog):
         # Create buttons
         self.refresh_btn = QPushButton("Refresh")
         self.refresh_btn.clicked.connect(self.populate_camera_list)
-        self.select_btn = QPushButton("Select")
+        self.select_btn = QPushButton("Done")
         self.select_btn.clicked.connect(self.accept)
         self.cancel_btn = QPushButton("Cancel")
         self.cancel_btn.clicked.connect(self.reject)
@@ -50,24 +60,48 @@ class CameraSelectionDialog(QDialog):
             for idx, available, info in cameras:
                 if available and info is not None:
                     width, height, fps = info
-                    self.camera_list.addItem(f"Camera {idx} ({width}x{height}, {fps} FPS)")
+                    item = QListWidgetItem(f"Camera {idx} ({width}x{height}, {fps} FPS)")
+                    item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                    item.setCheckState(Qt.CheckState.Unchecked)
+                    self.camera_list.addItem(item)
                     
-            # Select first item if available
-            if self.camera_list.count() > 0:
-                self.camera_list.setCurrentRow(0)
-                
         except Exception as e:
             logger.error(f"Error populating camera list: {str(e)}", exc_info=True)
             
-    def get_selected_camera(self) -> int:
-        """Get the selected camera index"""
+    def on_item_changed(self, item):
+        """Handle camera selection changes"""
         try:
-            current_item = self.camera_list.currentItem()
-            if current_item is not None:
-                # Extract camera index from text (e.g., "Camera 0 (640x480, 30 FPS)")
-                text = current_item.text()
-                camera_idx = int(text.split()[1])  # Get the number after "Camera"
-                return camera_idx
+            # Get camera index from item text
+            text = item.text()
+            camera_idx = int(text.split()[1])
+            
+            if item.checkState() == Qt.CheckState.Checked:
+                # Add camera if not already selected and limit to 2 cameras
+                if camera_idx not in self.selected_cameras:
+                    if len(self.selected_cameras) < 2:
+                        self.selected_cameras.append(camera_idx)
+                    else:
+                        # Uncheck if already have 2 cameras
+                        item.setCheckState(Qt.CheckState.Unchecked)
+            else:
+                # Remove camera if unchecked
+                if camera_idx in self.selected_cameras:
+                    self.selected_cameras.remove(camera_idx)
+                    
+            # Update status label
+            if len(self.selected_cameras) == 0:
+                self.status_label.setText("Select up to 2 cameras:")
+            elif len(self.selected_cameras) == 1:
+                self.status_label.setText("Selected Camera: " + str(self.selected_cameras[0]) + 
+                                        " (select another or click Done)")
+            else:
+                self.status_label.setText("Selected Cameras: " + 
+                                        str(self.selected_cameras[0]) + " and " + 
+                                        str(self.selected_cameras[1]))
+                
         except Exception as e:
-            logger.error(f"Error getting selected camera: {str(e)}", exc_info=True)
-        return None
+            logger.error(f"Error handling camera selection: {str(e)}", exc_info=True)
+            
+    def get_selected_cameras(self):
+        """Get list of selected camera indices"""
+        return self.selected_cameras.copy() if self.selected_cameras else None
