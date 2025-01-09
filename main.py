@@ -1,6 +1,13 @@
 import sys
+from pathlib import Path
+
+# Add src directory to Python path
+src_path = str(Path(__file__).parent.parent)
+if src_path not in sys.path:
+    sys.path.append(src_path)
+
+from src.ui.main_window import MainWindow
 from PyQt6.QtWidgets import QApplication
-from ui.main_window import MainWindow
 
 def main():
     app = QApplication(sys.argv)
